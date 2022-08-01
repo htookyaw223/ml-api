@@ -1,0 +1,10 @@
+﻿#site configuration
+site_id= @site_id,
+# output_dir is for report distination folder.If you don't set,the report will be generated to defauld folder.
+output_dir=,
+# for database configuration
+database_name = @database_name,
+database_ip = @database_ip,
+port=@port,
+username= @username,
+password= @password,

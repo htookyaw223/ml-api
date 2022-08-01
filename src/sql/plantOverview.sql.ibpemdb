@@ -1,0 +1,64 @@
+CREATE DEFINER=`EvercommSG`@`%` PROCEDURE `spForPlantOverViewHourly`()
+BEGIN
+declare vStartDate,vEndDate datetime;
+declare vCount,vFinished int default 0;
+declare vDataType,vTableName, vColumnName varchar(45);
+declare vIeee nvarchar(5000);
+declare vPrevOneHour int default 0;
+declare vEndDateHourly datetime default now();
+declare plantOverviewHourlyCursor cursor for select  dataType, tableName, columnName ,ieee from deviceMapping   ;
+	DECLARE CONTINUE HANDLER 
+        FOR NOT FOUND SET vFinished = 1;
+
+SET SESSION time_zone = "+0:00";
+SET SESSION group_concat_max_len = 1024 * 1024;
+
+
+ drop table if exists deviceMapping;
+ create temporary table deviceMapping select group_concat(CONCAT('\'', ieee, '\'')) as ieee,dataType,tableName,columnName from device_mapping  group by datatype;
+  
+ create table if not exists plant_overview_hourly(id int not null auto_increment primary key ,dataType varchar(45),value double ,ts datetime);
+ 
+ truncate table  plant_overview_hourly;
+ 
+   select count(*) into @totalCount from deviceMapping; 
+ 
+ while vPrevOneHour<60 do
+  -- set vEndDateHourly="2020-06-22 10:00:00";
+ set vEndDate=date_sub(now(),  INTERVAL vPrevOneHour MINUTE);
+ set vStartDate=date_sub(vEndDate, INTERVAL 10 MINUTE);
+ 
+ set @insertQuery= "insert into plant_overview_hourly (dataType,value,ts) values ";
+ set vCount =0;
+ open plantOverviewHourlyCursor;
+   plantOverViewHourlyLoop : loop
+	fetch plantOverviewHourlyCursor into  vDataType, vTableName, vColumnName ,vIeee; 
+	
+   if vCount >= @totalCount then
+				close plantOverviewHourlyCursor;
+				leave plantOverViewHourlyLoop;
+			end if;   
+        
+      set vCount= vCount+1;  
+    
+    set @selectPlantAvgMinutely = concat("select avg( ", vColumnName,") into @avgValue from iotmgmt.",vTableName," where ieee in (", vIeee,") and ts between '",vStartDate,"' and '",vEndDate,"' and ",vColumnName," >0" );
+    prepare stmt FROM  @selectPlantAvgMinutely;
+    execute stmt;
+    deallocate prepare stmt;
+    
+     if @avgValue is null then
+				set @avgValue = 0;
+			end if;
+    
+    set @insertQuery =concat(@insertQuery,"('",vDataType,"',", @avgValue,",'",vEndDate,"'" ,IF(vCount=@totalCount, ")","),"));
+
+	 end loop plantOverViewHourlyLoop;
+     
+     prepare stmt FROM  @insertQuery;
+     execute stmt;
+     deallocate prepare stmt;
+    
+    set vPrevOneHour = vPrevOneHour + 1;
+    end while; 
+     select * from plant_overview_hourly ;
+ END

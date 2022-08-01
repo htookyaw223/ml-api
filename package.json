@@ -1,0 +1,38 @@
+{
+  "name": "ibpem-dummy-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "nodemon app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.0.1",
+    "body-parser": "^1.19.0",
+    "cors": "^2.8.5",
+    "cron": "^1.8.2",
+    "date-fns": "^2.10.0",
+    "date-fns-tz": "^1.0.10",
+    "deep-equal": "^2.0.3",
+    "express": "^4.17.1",
+    "file-regex": "^3.1.0",
+    "jsonwebtoken": "^8.5.1",
+    "moment-timezone": "^0.5.27",
+    "mysql2": "^2.1.0",
+    "node-fetch": "^2.6.1",
+    "nodemon": "^2.0.4",
+    "query-string": "^6.10.1",
+    "redis": "^2.8.0",
+    "save": "^2.4.0",
+    "tz-offset": "0.0.2",
+    "uuid": "^3.4.0"
+  },
+  "devDependencies": {
+    "ts-node": "^10.7.0",
+    "typescript": "^4.6.4"
+  }
+}

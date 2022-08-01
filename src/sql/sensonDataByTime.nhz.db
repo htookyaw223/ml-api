@@ -1,0 +1,93 @@
+CREATE DEFINER=`EvercommSG`@`%` PROCEDURE `spSensorDataByTime`(pSd datetime,  pEd datetime)
+BEGIN
+	/*
+    call aimgmt.spSensorDataByTime('2019-10-20 00:00', '2019-10-20 23:59');
+    */
+    declare vId int;
+    declare vIeee varchar(45) default "";
+    declare vColumnName varchar(45) default "";
+    declare vTableName varchar(45) default "";
+    
+    declare vSensorColumns nvarchar(5000) default "";
+    declare vStartDate varchar(100) default "";
+	declare vEndDate varchar(100) default "";
+    declare vTmpDate varchar(100) default "";
+    declare vDate varchar(100) default "";
+    declare vSensorValue double default 0.0;
+    declare vCount int default 0;
+        
+    declare emCursor  cursor for select id, ieee, columnName, tableName from aimgmt.equipment_mapping where `enabled`=1;
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET @sensorValue = 0;
+    
+    SET SESSION time_zone = "+0:00";
+    SET SESSION group_concat_max_len = 1024 * 1024;
+    
+    select count(*) into @totalCount from aimgmt.equipment_mapping where `enabled`=1;
+    
+    drop table if exists equip_map;
+    drop table if exists sensor_data;
+    
+    create temporary table if not exists equip_map select id, ieee, parameter, equipId, tableName, columnName from aimgmt.equipment_mapping where `enabled`=1;
+    
+	SELECT GROUP_CONCAT(ieee, ' double') INTO vSensorColumns FROM equip_map;
+    
+    set @sensor_data_sql := CONCAT("create temporary table if not exists sensor_data (ts datetime not null primary key,", vSensorColumns , ")");  
+    prepare stmt FROM @sensor_data_sql;
+    execute stmt;
+    deallocate prepare stmt;
+    
+    truncate table sensor_data;
+    
+    SELECT GROUP_CONCAT(ieee) INTO @insert_query FROM equip_map;
+    set @insert_query = CONCAT("insert into sensor_data (ts,", @insert_query , ") values "); 
+    
+   set vDate = pSd;
+   while (vDate<=pEd) do
+	   set vTmpDate =date_format(vDate,"%Y-%m-%d %H:%i");
+	   set vStartDate =date_format(vDate,"%Y-%m-%d %H:%i:00");
+	   set vEndDate = date_format(vDate,"%Y-%m-%d %H:%i:59");
+	
+       set @insert_query = concat(@insert_query, IF(vDate = pSd, "('", ",('"), vTmpDate, "'");
+       
+	   SET vCount  = 0;
+	   open emCursor;
+		sensorLoop : loop
+			fetch next from emCursor into vId, vIeee, vColumnName, vTableName;
+            
+			if vCount >= @totalCount then
+				close emCursor;
+				leave sensorLoop;
+			end if;   
+            
+            SET vCount  = vCount + 1;
+            
+			set @select_query = concat(
+				 " SELECT ",vColumnName,
+				 " into @sensorValue FROM iotmgmt.",vTableName,
+				 " WHERE ieee= '", vIeee , "' and ts between '", vStartDate, "' and '", vEndDate, "' limit 1" 
+			);
+			prepare stmt FROM  @select_query;
+			execute stmt;
+			deallocate prepare stmt;
+            
+            if @sensorValue is null then
+				set @sensorValue = 0;
+			end if;
+            
+            set @insert_query = concat(@insert_query, ",", @sensorValue);
+
+		end loop sensorLoop;
+        
+        set @insert_query = concat(@insert_query, ")");
+        
+        set vDate=date_add(vDate, INTERVAL 1 MINUTE);
+    end while;
+    
+    prepare stmt FROM  @insert_query;
+	execute stmt;
+	deallocate prepare stmt;
+    
+	SELECT * FROM sensor_data;
+    
+END

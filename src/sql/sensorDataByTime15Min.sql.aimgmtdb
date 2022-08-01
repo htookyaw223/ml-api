@@ -1,0 +1,138 @@
+CREATE DEFINER=`EvercommSG`@`%` PROCEDURE `spSensorDataRealtime15Minutes`()
+BEGIN
+	/*
+    call aimgmt.spSensorDataByTime('2019-10-20 00:00', '2019-10-20 23:59');
+    */
+    declare vSd datetime default null;
+    declare vEd datetime default null;
+    
+    declare vIeee varchar(45) default "";
+    declare vColumnName varchar(45) default "";
+    declare vTableName varchar(45) default "";
+    
+    declare vParameter varchar(45) default "";
+    declare vEquipId varchar(45) default "";
+    
+    declare vSensorColumns nvarchar(5000) default "";
+    declare vStartDate varchar(100) default "";
+	declare vEndDate varchar(100) default "";
+    declare vTmpDate varchar(100) default "";
+    declare vDate varchar(100) default "";
+    declare vSensorValue double default 0.0;
+    
+    declare vParameterCount int default 0;
+    declare vEquipCount int default 0;
+
+    declare emCursor  cursor for select distinct parameter  from iotmgmt.equipment_mapping where `enabled`=1 order by parameter;
+    
+    declare equipCursor  cursor for select distinct equipId  from iotmgmt.equipment_mapping where `enabled`=1 order by equipId;
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET @sensorValue = 0;
+    
+    SET SESSION time_zone = "+0:00";
+    SET SESSION group_concat_max_len = 1024 * 1024;
+    
+    set vEd = NOW();
+    set vSd=date_sub(vEd, INTERVAL 15 MINUTE);
+    
+    select count(distinct parameter) into @totalParameterCount from iotmgmt.equipment_mapping where `enabled`=1 order by parameter;
+    select count(distinct equipId) into @totalEquipCount  from iotmgmt.equipment_mapping where `enabled`=1 order by equipId;
+    
+    drop table if exists equip_map;
+    drop table if exists sensor_data_15min_2;
+    
+    create temporary table if not exists equip_map select id, ieee, parameter, equipId, tableName, columnName from iotmgmt.equipment_mapping where `enabled`=1 order by equipId;
+    
+	SELECT GROUP_CONCAT(DISTINCT parameter, ' double') INTO vSensorColumns FROM equip_map;
+    
+    set @sensor_data_sql := CONCAT("create table if not exists sensor_data_15min_2 (ts datetime not null, site_id varchar(45) not null, equip_id int(11) not null,", vSensorColumns , ", primary key (ts, site_id, equip_id))");  
+    
+    prepare stmt FROM @sensor_data_sql;
+    execute stmt;
+    deallocate prepare stmt;
+ 
+    SELECT GROUP_CONCAT(DISTINCT parameter) INTO @insert_query FROM equip_map;
+    set @insert_query = CONCAT("insert into sensor_data_15min_2 (ts,site_id,equip_id,", @insert_query , ") values "); 
+
+	set @startInnerLoops = 1;
+
+   set vDate = vSd;
+   while (vDate<vEd) do
+	   set vTmpDate =date_format(vDate,"%Y-%m-%d %H:%i");
+	   set vStartDate =date_format(vDate,"%Y-%m-%d %H:%i:00");
+	   set vEndDate = date_format(vDate,"%Y-%m-%d %H:%i:59");
+       
+       SET vEquipCount = 0;
+       
+       open equipCursor;
+		equipLoop : loop
+			fetch next from equipCursor into vEquipId;
+            
+            if vEquipCount >= @totalEquipCount then
+				close equipCursor;
+				leave equipLoop;
+			end if; 
+				
+			SET vEquipCount  = vEquipCount + 1;
+            
+			set @insert_query = concat(@insert_query, IF(@startInnerLoops = 1, "('", ",('"), vTmpDate, "','cl_tao',",vEquipId );
+            set @startInnerLoops = 0;
+            
+            SET vParameterCount  = 0;
+            
+		   open emCursor;
+			sensorLoop : loop
+				fetch next from emCursor into vParameter;
+				
+				if vParameterCount >= @totalParameterCount then
+					close emCursor;
+					leave sensorLoop;
+				end if; 
+				
+				SET vParameterCount  = vParameterCount + 1;
+				
+				SET vColumnName = null;
+                SET vTableName = null;
+                SET vIeee = null;
+                
+                select columnName, tableName, ieee into vColumnName, vTableName, vIeee 
+                from iotmgmt.equipment_mapping 
+                where equipId=vEquipId and parameter=vParameter;
+                
+                set @sensorValue = null;
+                
+                if (vIeee is not null and vColumnName is not null and vTableName is not null) then
+					set @select_query = concat(
+						 " SELECT ",vColumnName,
+						 " into @sensorValue FROM iotmgmt.",vTableName,
+						 " WHERE ieee= '", vIeee , "' and ts between '", vStartDate, "' and '", vEndDate, "' limit 1" 
+					);
+					prepare stmt FROM  @select_query;
+					execute stmt;
+					deallocate prepare stmt;
+				end if;
+                
+				if @sensorValue is null then
+					set @sensorValue = 0;
+				end if;
+                
+				set @insert_query = concat(@insert_query, ",", @sensorValue);
+
+			end loop sensorLoop;
+            set @insert_query = concat(@insert_query, ")");
+		end loop equipLoop;
+        
+        set vDate=date_add(vDate, INTERVAL 1 MINUTE);
+    end while;
+    
+    truncate table sensor_data_15min_2;
+    
+	/* select @insert_query; */
+    
+    prepare stmt FROM  @insert_query;
+	execute stmt;
+	deallocate prepare stmt;
+
+	/* SELECT * FROM sensor_data_15min_2; */
+    
+END

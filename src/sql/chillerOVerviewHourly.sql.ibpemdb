@@ -1,0 +1,75 @@
+CREATE DEFINER=`EvercommSG`@`%` PROCEDURE `spForChillerOVerViewHourlyNh`()
+BEGIN
+declare vStartDate,vEndDate datetime;
+declare vCount int default 0;
+declare vDataType, vDeviceType, vTableName, vColumnName, vIeee varchar(45);
+declare vDeviceId int; 
+declare vPrevOneHour int default 0;
+declare vEndDateHourly datetime default now();
+
+declare chilerOverviewCursor cursor for select deviceId, dataType, deviceType, tableName, columnName, ieee from device_map   ;
+	 DECLARE CONTINUE HANDLER 
+        FOR NOT FOUND SET @avgValue=0;
+
+SET SESSION time_zone = "+0:00";
+SET SESSION group_concat_max_len = 1024 * 1024;
+
+while vPrevOneHour<60 do
+
+ set vEndDate=date_sub(vEndDateHourly,  INTERVAL vPrevOneHour MINUTE);
+ set vStartDate=date_sub(vEndDate, INTERVAL 10 MINUTE);
+-- set vStartDate = "2020-06-17 10:15:00";
+-- set vEndDate = "2020-06-17 10:24:59";
+
+ drop table if exists device_map;
+-- drop table if exists chiller_overview;
+ 
+ 
+ create temporary table device_map select deviceId, dataType, deviceType, tableName, columnName, ieee from device_mapping where deviceType='CH';
+  
+  create table if not exists chiller_overview_hourly (id int not null auto_increment primary key ,deviceId int, deviceType varchar(45),dataType varchar(45),value double,ts datetime);
+   
+  select count(*) into @totalCount from device_map; 
+  
+   set @insertQuery= "insert into chiller_overview_hourly (deviceId,deviceType,dataType,value,ts) values ";
+   
+   set vCount=0;
+   
+   open chilerOverviewCursor;
+   
+    chillerOverViewLoop : loop
+       fetch chilerOverviewCursor into  vDeviceId, vDataType, vDeviceType, vTableName, vColumnName, vIeee ; 
+		 
+         if vCount >= @totalCount then
+				close chilerOverviewCursor;
+				leave chillerOverViewLoop;
+			end if;   
+            
+            SET vCount  = vCount + 1;
+        
+	set @selectAveragerQuery = concat("select avg(", vColumnName,") into @avgValue from iotmgmt.",vTableName," where ieee='", vIeee,"' and ts between '",vStartDate,"' and '",vEndDate,"' and ",vColumnName," >0" );
+    
+	prepare stmt FROM  @selectAveragerQuery;
+    execute stmt;
+    deallocate prepare stmt;
+    
+     if @avgValue is null then
+				set @avgValue = 0;
+			end if;
+    
+    set @insertQuery =concat(@insertQuery,"(",
+	vDeviceId,",'",vDeviceType,"','",vDataType,"',", @avgValue,",'",vEndDate,"'" ,IF(vCount=@totalCount, ")","),"));
+
+    end loop chillerOverViewLoop;
+    
+    truncate table chiller_overview;
+    prepare stmt FROM @insertQuery;
+	execute stmt;
+	deallocate prepare stmt;
+    
+    set vPrevOneHour = vPrevOneHour + 1;
+    
+    end while;
+    
+     select * from chiller_overview_hourly;
+END

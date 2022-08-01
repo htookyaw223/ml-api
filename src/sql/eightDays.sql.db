@@ -1,0 +1,70 @@
+CREATE DEFINER=`EvercommSG`@`%` PROCEDURE `spForEightDaysWithAnomaly`(in year1 varchar(45))
+BEGIN
+declare vYear,vDataType varchar(45) default "";
+declare vDeviceId ,vId int;
+declare vEquipTable,vEquipColumn,vEquipIeee,vEquipId varchar(45);
+declare vStartDate,vEndDate datetime;
+declare vFinished int default 0;
+
+declare eightDaysCursor cursor for select id,startDate,endDate,year,dataType,deviceId,equipId from eight_days ;
+	 DECLARE CONTINUE HANDLER 
+        FOR NOT FOUND SET vFinished = 1;
+        
+ SET SESSION time_zone = "+0:00";
+ SET SESSION group_concat_max_len = 1024 * 1024;
+    
+    drop table if exists eight_days;
+    drop table if exists equip_map;
+ 
+    
+    create temporary table equip_map select parameter,equipId, tableName,columnName,ieee from iotmgmt.equipment_mapping;
+    
+     
+   set @eightDaysQuery =concat("create temporary table eight_days select * from ibpem_db.yearly_eight_day1 where year= '",year1,"' ");
+   prepare stmt from  @eightDaysQuery;
+   execute stmt;
+   deallocate prepare stmt;
+
+ open eightDaysCursor;
+   
+   eightDaysLoop : loop
+ 	          fetch eightDaysCursor into vId,vStartDate,vEndDate,vYear,vDataType,vDeviceId,vEquipId ; 
+          if vFinished = 1 then
+			leave eightDaysLoop;
+		  end if; 
+          
+  set @anomalyQuery=concat("select count(*)  into @anomalyCount from iotdata.detection_master 
+                            where start_time >= '", vStartDate,"' and end_time <='", vEndDate,
+                            "' and parameter = '", vDataType,"' and equip_id ='",vEquipId,"'");
+                            
+   prepare stmt from  @anomalyQuery;
+   execute stmt;
+   deallocate prepare stmt;
+		
+   set @equipMappingQuery = concat("select tableName,ieee into @table,@ieee
+					                from equip_map where equipId=",
+                                   vDeviceId, " and parameter = '",vDataType,"'");
+   prepare stmt from  @equipMappingQuery;
+   execute stmt;
+   deallocate prepare stmt;
+   
+  set @rawQuery = concat("select count(*) into @rawCount from iotmgmt.",@table," where ts between '",
+                    vStartDate,"' and '", vEndDate,"' and ieee= '",@ieee,"'");
+                    
+   prepare stmt from  @rawQuery;
+   execute stmt;
+   deallocate prepare stmt;
+   
+   set @eightDaysQuery =concat("update ibpem_db.yearly_eight_day1 set count= ", @rawCount,
+                         ", anomalyCount=", @anomalyCount," where id =",vId);
+   
+   prepare stmt from  @eightDaysQuery;
+   execute stmt;
+   deallocate prepare stmt;
+   
+   
+
+end loop eightDaysLoop;
+close eightDaysCursor;
+
+END
